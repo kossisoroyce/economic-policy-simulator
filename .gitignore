@@ -1,0 +1,18 @@
+# Ignore Python virtual environment
+venv/
+
+# Ignore Python bytecode and cache
+__pycache__/
+*.pyc
+
+# Ignore sensitive information
+.streamlit/secrets.toml
+
+# Ignore paper-related generated files
+paper.md
+*.svg
+*.png
+*.pdf
+
+# Ignore OS-specific files (optional but good practice)
+.DS_Store
