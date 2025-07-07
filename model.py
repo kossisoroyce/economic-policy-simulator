@@ -1,4 +1,5 @@
 import mesa
+import math
 
 class NigerianAgent(mesa.Agent):
     """
@@ -17,7 +18,7 @@ class NigerianAgent(mesa.Agent):
         # --- Assign Income Level for Households ---
         # This adds a layer of social stratification to our model.
         if self.agent_type == "Household":
-            self.income_level = income_level or self.random.choices(["low", "medium", "high"], [0.6, 0.3, 0.1])[0]
+            self.income_level = income_level or self.random.choices(["low", "medium", "high"], [0.4, 0.5, 0.1])[0]
 
     def step(self):
         # This method is called for every agent at every step of the simulation.
@@ -96,11 +97,11 @@ class NigeriaModel(mesa.Model):
     This is the main model for our Nigerian policy simulation.
     It now includes macroeconomic indicators to create a more realistic environment.
     """
-    def __init__(self, width=20, height=20, 
-                 initial_household_density=0.5, initial_business_density=0.1, 
+    def __init__(self, target_population=200_000_000, population_scale=10_000,
+                 household_to_business_ratio=5.0,
                  household_welfare_support=0.1, key_sector_investment=0.1,
-                 gdp_growth=0.03, inflation_rate=0.265, unemployment_rate=0.08,
-                 tax_rate=0.1, # New government parameter
+                 gdp_growth=0.034, inflation_rate=0.2297, unemployment_rate=0.053,
+                 tax_rate=0.24,
                  # --- Advanced Economic Assumptions ---
                  low_income_inflation_sensitivity=0.7, medium_income_inflation_sensitivity=0.4, high_income_inflation_sensitivity=0.1,
                  unemployment_sensitivity=0.5,
@@ -108,8 +109,22 @@ class NigeriaModel(mesa.Model):
                  low_income_expansion_propensity=0.05, medium_income_expansion_propensity=0.1, high_income_expansion_propensity=0.15):
         super().__init__()
         # --- Model Parameters ---
-        self.width = width
-        self.height = height
+        self.target_population = target_population
+        self.population_scale = population_scale
+        self.household_to_business_ratio = household_to_business_ratio
+
+        # --- Calculate number of agents and grid size ---
+        num_agents_to_simulate = int(self.target_population / self.population_scale)
+        
+        # Maintain household/business ratio
+        num_businesses = int(num_agents_to_simulate / (self.household_to_business_ratio + 1))
+        num_households = num_agents_to_simulate - num_businesses
+
+        # Dynamically size grid to have ~50% density to allow for expansion
+        grid_area = num_agents_to_simulate * 2
+        self.width = int(math.sqrt(grid_area))
+        self.height = int(math.sqrt(grid_area))
+
         # Policy Levers
         self.household_welfare_support = household_welfare_support
         self.key_sector_investment = key_sector_investment
@@ -119,7 +134,6 @@ class NigeriaModel(mesa.Model):
         self.unemployment_rate = unemployment_rate
 
         # --- Store Advanced Assumptions ---
-        # These parameters control the core economic logic of the agent behaviors.
         self.low_income_inflation_sensitivity = low_income_inflation_sensitivity
         self.medium_income_inflation_sensitivity = medium_income_inflation_sensitivity
         self.high_income_inflation_sensitivity = high_income_inflation_sensitivity
@@ -137,29 +151,39 @@ class NigeriaModel(mesa.Model):
         self.total_investment_spending = 0
 
         # --- Setup Simulation Environment ---
-        self.grid = mesa.space.MultiGrid(width, height, True)
+        self.grid = mesa.space.MultiGrid(self.width, self.height, True)
         self.schedule = mesa.time.RandomActivation(self)
         
         # --- Create the initial population of agents ---
-        # We iterate through each cell in the grid and decide whether to place an agent there.
         agent_id = 0
-        for x in range(self.width):
-            for y in range(self.height):
-                pos = (x, y)
-                if self.random.random() < initial_household_density:
-                    # Now we assign an income level when creating the initial households.
-                    agent = NigerianAgent(agent_id, self, "Household") # Income level is assigned in the agent's __init__
-                    self.grid.place_agent(agent, pos)
-                    self.schedule.add(agent)
-                    agent_id += 1
-                elif self.random.random() < initial_business_density:
-                    agent = NigerianAgent(agent_id, self, "Business")
-                    self.grid.place_agent(agent, pos)
-                    self.schedule.add(agent)
-                    agent_id += 1
+
+        # Get all empty cells, shuffle them to ensure random placement
+        empty_cells = list(self.grid.empties)
+        self.random.shuffle(empty_cells)
+
+        # Create households
+        for _ in range(num_households):
+            if not empty_cells:
+                print("Warning: Not enough space on the grid to place all households.")
+                break
+            pos = empty_cells.pop()
+            agent = NigerianAgent(agent_id, self, "Household")
+            self.grid.place_agent(agent, pos)
+            self.schedule.add(agent)
+            agent_id += 1
+
+        # Create businesses
+        for _ in range(num_businesses):
+            if not empty_cells:
+                print("Warning: Not enough space on the grid to place all businesses.")
+                break
+            pos = empty_cells.pop()
+            agent = NigerianAgent(agent_id, self, "Business")
+            self.grid.place_agent(agent, pos)
+            self.schedule.add(agent)
+            agent_id += 1
 
         # --- Unique Agent ID Generator ---
-        # We store the next available ID and expose a proper method to retrieve it.
         self._next_available_id = agent_id
 
         def _next_id():
@@ -169,27 +193,23 @@ class NigeriaModel(mesa.Model):
         self.next_id = _next_id
 
         # --- Feedback Loop State ---
-        # We initialize the population count *after* agents have been created and added to the schedule.
         self.previous_population = self.schedule.get_agent_count()
 
         # --- Setup Data Collection ---
-        # This helps us track key metrics throughout the simulation.
         self.datacollector = mesa.DataCollector(
             model_reporters={
-                # Total counts
-                "Households": lambda m: sum(1 for a in m.schedule.agents if a.agent_type == "Household"),
-                "Businesses": lambda m: sum(1 for a in m.schedule.agents if a.agent_type == "Business"),
-                # Income class breakdown
-                "Low Income": lambda m: sum(1 for a in m.schedule.agents if a.agent_type == "Household" and a.income_level == "low"),
-                "Medium Income": lambda m: sum(1 for a in m.schedule.agents if a.agent_type == "Household" and a.income_level == "medium"),
-                "High Income": lambda m: sum(1 for a in m.schedule.agents if a.agent_type == "Household" and a.income_level == "high"),
-                # Government Finance
+                # Scale up the results to reflect the real population
+                "Households": lambda m: sum(1 for a in m.schedule.agents if a.agent_type == "Household") * m.population_scale,
+                "Businesses": lambda m: sum(1 for a in m.schedule.agents if a.agent_type == "Business") * m.population_scale,
+                "Low Income": lambda m: sum(1 for a in m.schedule.agents if a.agent_type == "Household" and a.income_level == "low") * m.population_scale,
+                "Medium Income": lambda m: sum(1 for a in m.schedule.agents if a.agent_type == "Household" and a.income_level == "medium") * m.population_scale,
+                "High Income": lambda m: sum(1 for a in m.schedule.agents if a.agent_type == "Household" and a.income_level == "high") * m.population_scale,
+                # Government Budget is an absolute value, not a scaled count
                 "Government Budget": lambda m: m.government_budget,
                 # Dynamic Macro-variables
                 "Unemployment Rate": lambda m: m.unemployment_rate * 100,
             }
         )
-        # Manually collect data for the initial state (step 0) before the simulation starts.
         self.datacollector.collect(self)
 
     def step(self):

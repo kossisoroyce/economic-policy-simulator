@@ -1,305 +1,362 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import openai
+import nest_asyncio
+
+nest_asyncio.apply()
+import os
 import json
+import pandas as pd
+import pydantic
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
 from model import NigeriaModel
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Nigerian Policy Simulator",
+    page_title="Nigerian Economic Policy Simulator",
     page_icon="🇳🇬",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-# --- OpenAI API Setup ---
-try:
-    openai.api_key = st.secrets["OPENAI_API_KEY"]
-except FileNotFoundError:
-    st.error("OpenAI API key not found. Please add it to your secrets.toml file.")
-    st.stop()
+# --- Custom Theme ---
+st.markdown('<style>h1{color: #2E8B57;}</style>', unsafe_allow_html=True)
 
-# --- AI-Powered Functions ---
-def get_ai_parameters(policy_text):
-    """
-    Uses OpenAI to parse natural language and extract simulation parameters.
-    It's designed to return a JSON object, which makes it reliable.
-    """
-    prompt = f"""
-    You are an economic policy analysis model. Your task is to read a user's description of a policy for Nigeria and extract specific numerical parameters for a simulation.
+# --- Session State Initialization ---
+def init_session_state():
+    """Initializes all required session state variables with default values."""
+    defaults = {
+        'api_key': None,
+        'policy_text': "",
+        'ai_params': None,
+        'simulation_results': None,
+        'analysis_complete': False,
+        # Economic Scenario
+        'gdp_growth': 3.4,
+        'inflation_rate': 22.97,
+        'unemployment_rate': 5.3,
+        'tax_rate': 24.0,
+        # Advanced Assumptions
+        'low_income_inflation_sensitivity': 0.7,
+        'medium_income_inflation_sensitivity': 0.4,
+        'high_income_inflation_sensitivity': 0.1,
+        'unemployment_sensitivity': 0.5,
+        'welfare_support_effectiveness': 0.3,
+        'gdp_growth_effectiveness': 0.2,
+        'low_income_expansion_propensity': 0.05,
+        'medium_income_expansion_propensity': 0.1,
+        'high_income_expansion_propensity': 0.15
+    }
+    for key, default_value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
 
-    The user's policy description is:
-    '{policy_text}'
+# --- AI & Simulation Functions ---
 
-    The user's policy is: '{policy_text}'
+def get_ai_parameters(policy_text, api_key):
+    """Uses LangChain with Google Gemini to extract structured economic parameters."""
+    class PolicyParameters(pydantic.BaseModel):
+        household_welfare_support: float = pydantic.Field(description="A float between 0.0 and 1.0 for direct household support.")
+        key_sector_investment: float = pydantic.Field(description="A float between 0.0 and 1.0 for investment in a key sector.")
+        target_sector_name: str = pydantic.Field(description="The name of the targeted economic sector.")
+        rationale: str = pydantic.Field(description="A brief explanation for the chosen parameter values.")
 
-    Your task is to:
-    1.  **Analyze the policy**: What is the core intent? Does it primarily target household welfare, a specific economic sector, or both?
-    2.  **Translate to parameters**: Convert this intent into values for `household_welfare_support` and `key_sector_investment`.
-    3.  **Provide a rationale**: Briefly explain your reasoning in a `rationale` field. Why did you choose these parameter values based on the user's policy?
-
-    Respond with ONLY a JSON object with four fields: `household_welfare_support`, `key_sector_investment`, `target_sector_name` (e.g., 'Agriculture', 'Tech Sector', or 'General Business' if no specific sector is targeted or investment is zero), and `rationale`. 
-    
-    Example for the policy 'Increase the healthcare budget by 10%':
-    {{
-        "household_welfare_support": 0.3,
-        "key_sector_investment": 0.0,
-        "rationale": "Increased healthcare spending primarily boosts household welfare by reducing out-of-pocket health expenses. I have modeled this as a low-to-moderate increase in household support. It has no direct impact on key sector investment."
-    }}
-    """
+    parser = JsonOutputParser(pydantic_object=PolicyParameters)
+    prompt = ChatPromptTemplate.from_template(
+        """You are an expert economic policy analysis model. Your task is to read a user's policy description for Nigeria and extract numerical parameters for a simulation.
+        
+        Policy Description: "{policy_text}"
+        
+        Respond with a JSON object matching this format: {format_instructions}
+        """
+    )
     
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4-turbo-preview",
-            messages=[
-                {"role": "system", "content": "You are a helpful economic analyst that only responds with JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            response_format={"type": "json_object"}
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-pro",
+            temperature=0.0,
+            google_api_key=api_key,
+            convert_system_message_to_human=True
         )
-        params = json.loads(response.choices[0].message.content)
+        chain = prompt | llm | parser
+        params = chain.invoke({
+            "policy_text": policy_text,
+            "format_instructions": parser.get_format_instructions()
+        })
         return params
     except Exception as e:
-        st.error(f"Error extracting parameters with AI: {e}")
+        st.error(f"AI Parameter Extraction Failed: {e}")
         return None
 
-def get_ai_analysis(policy_text, sim_results, gdp_growth, inflation_rate, initial_unemployment_rate, tax_rate):
-    """
-    Uses OpenAI's GPT-4 to generate a qualitative analysis of the policy's impact, now including fiscal sustainability.
-    """
-    # Calculate the percentage change for each income group.
-    low_income_change = ((sim_results['final_low_income'] - sim_results['initial_low_income']) / sim_results['initial_low_income']) * 100 if sim_results['initial_low_income'] > 0 else 0
-    medium_income_change = ((sim_results['final_medium_income'] - sim_results['initial_medium_income']) / sim_results['initial_medium_income']) * 100 if sim_results['initial_medium_income'] > 0 else 0
-    high_income_change = ((sim_results['final_high_income'] - sim_results['initial_high_income']) / sim_results['initial_high_income']) * 100 if sim_results['initial_high_income'] > 0 else 0
-    final_budget = sim_results['time_series_data']['Government Budget'].iloc[-1]
+def get_ai_analysis(policy_text, sim_results, api_key):
+    """Generates a deep analysis of the simulation results using Google Gemini."""
+    # Extract metrics from session state and simulation results
+    gdp_growth = st.session_state.gdp_growth
+    inflation_rate = st.session_state.inflation_rate
+    initial_unemployment_rate = st.session_state.unemployment_rate
+    tax_rate = st.session_state.tax_rate
+    """Generates a deep analysis of the simulation results using Google Gemini."""
+    # Extract final metrics for the prompt
     final_unemployment = sim_results['time_series_data']['Unemployment Rate'].iloc[-1]
+    unemployment_change = final_unemployment - initial_unemployment_rate
+    sector_growth = sim_results['target_sector_growth_percent']
+    gov_budget = sim_results['time_series_data']['Government Budget'].iloc[-1]
+    low_income_change = sim_results['final_low_income'] - sim_results['initial_low_income']
+    high_income_change = sim_results['final_high_income'] - sim_results['initial_high_income']
+    target_sector = sim_results['target_sector_name']
 
-    prompt = f"""
-    You are a senior economic advisor to the President of Nigeria, with deep expertise in development economics, inequality, and policy impact analysis. You are delivering a concise, professional briefing.
+    prompt_template = """
+    **Persona:** You are a senior economic advisor. You are known for your candid, clear-eyed, and rigorous assessments. Your task is to provide a deep, explicit, and unvarnished analysis of a proposed economic policy based on a simulation. Go beyond the surface-level numbers to explain the second and third-order effects. Your goal is to give the user a complete picture of the potential consequences, both positive and negative.
 
-    **Context:**
-    - **User's Proposed Policy:** "{policy_text}"
-    - **Initial Economic & Fiscal Conditions:** GDP Growth at {gdp_growth}%, Inflation at {inflation_rate}%, Initial Unemployment at {initial_unemployment_rate}%, Tax Rate at {tax_rate}%.
-    - **AI Policy Interpretation:** The policy was translated into a {sim_results['household_welfare_support']*100:.0f}% focus on household welfare and a {sim_results['key_sector_investment']*100:.0f}% focus on key sector investment.
+    **Policy Under Review:**
+    "{policy_text}"
 
-    **Simulation Results (50 steps):**
-    - **Overall Population Growth:** {sim_results['population_growth_percent']:.1f}%.
-    - **Target Sector Growth:** {sim_results['target_sector_growth_percent']:.1f}%.
-    - **Impact on Income Classes:**
-        - Low-Income Households: {low_income_change:+.1f}% change.
-        - Medium-Income Households: {medium_income_change:+.1f}% change.
-        - High-Income Households: {high_income_change:+.1f}% change.
-    - **Final Government Budget:** {final_budget:.2f} units.
-    - **Final Unemployment Rate:** {final_unemployment:.1f}%.
+    **Initial Economic Conditions:**
+    - GDP Growth: {gdp_growth:.1f}%
+    - Inflation Rate: {inflation_rate:.1f}%
+    - Initial Unemployment Rate: {initial_unemployment_rate:.1f}%
+    - Government Tax Rate: {tax_rate:.1f}%
 
-    **Your Task:**
-    Provide a brief, insightful analysis (4-5 paragraphs) of the likely real-world impacts of this policy. Structure your response with the following markdown headers:
+    **Key Simulation Results:**
+    - Final Unemployment Rate: {final_unemployment:.2f}% (a change of {unemployment_change:+.2f}%)
+    - Target Sector ('{target_sector}') Growth: {sector_growth:.2f}%
+    - Final Government Budget: {gov_budget:,.0f}
+    - Change in Low-Income Population: {low_income_change:.0f}
+    - Change in High-Income Population: {high_income_change:.0f}
 
-    ### Executive Summary
-    (Provide a one-sentence summary of the key outcome, focusing on its effect on social strata and fiscal health.)
+    **Your Mandate: A Deep and Candid Analysis**
+    Provide a structured analysis in Markdown. Be direct. Also you do not need to format it like it is a letter. You can just write it as a normal brief.
 
-    ### Analysis of Key Impacts
-    (Discuss the main effects on businesses and households. Did the policy disproportionately benefit one income group? Link the simulation results directly to the policy's intent.)
+    1.  **Executive Summary:** A concise, top-line summary. What is the single most important outcome of this policy, and what is the most significant risk?
 
-    ### Dynamic Feedbacks & Stability
-    (The unemployment rate is now DYNAMIC. It started at {initial_unemployment_rate}% and ended at {final_unemployment:.1f}%. Did the policy create a virtuous cycle (e.g., growth -> lower unemployment -> more growth) or a vicious cycle (e.g., population growth outpacing GDP, leading to higher unemployment)? Analyze the stability of the system you've created. Is this a stable path or a boom-bust cycle?)
+    2.  **Deep Dive: Causal Analysis of Key Impacts:**
+        - **Employment and Economic Structure:** The unemployment rate changed by {unemployment_change:+.2f}%. Explain the precise mechanism. Did the investment in '{target_sector}' create enough high-quality jobs to offset other effects? Or was the impact marginal? Explain *why* the number of businesses changed as it did.
+        - **Household Prosperity and Inequality:** How did this policy impact the different income strata? Was the welfare support a temporary relief or did it foster genuine upward mobility? Explicitly state whether the policy likely increased or decreased income inequality and explain the causal chain.
 
-    ### Fiscal Sustainability Analysis
-    (Analyze the government's final budget. Was the policy self-funding, or did it create a deficit? At a {tax_rate}% tax rate, is this policy sustainable long-term? **Crucially, remember that if the budget becomes negative, all policy spending stops.** Did this happen? Comment on the trade-off between the policy's goals and its fiscal cost.)
+    3.  **Explicit Risks and Negative Consequences:** This is the most critical section. Do not be vague. Provide a detailed, clear-eyed assessment of the potential downsides.
+        - **Fiscal Sustainability:** Analyze the final government budget. Is the policy fiscally sustainable? If it creates a deficit, explain the long-term consequences (e.g., increased debt service, crowding out private investment, future austerity).
+        - **Sectoral Imbalance & 'Dutch Disease' Risk:** The target sector grew by {sector_growth:.2f}%. Is there a risk of neglecting other vital sectors of the economy? Could this lead to an over-reliance on '{target_sector}', creating vulnerabilities?
+        - **Inflationary Pressure:** Could the combination of welfare support and investment spending lead to significant demand-pull inflation that harms the very households the policy aims to help? Explain this risk clearly.
 
-    ### Risks & Social Considerations
-    (What are the potential unintended consequences, especially regarding social cohesion? Could this policy lead to resentment? Is the growth in one sector leaving others behind?)
-
-    Be direct, use professional language, and provide actionable insights for a policymaker concerned with both economic growth and social equity.
+    4.  **Actionable Recommendation:** Conclude with a clear, decisive, and data-driven recommendation. Should the policy be **Approved**, **Amended**, or **Rejected**? If Amended, provide specific, actionable changes required to mitigate the risks you identified.
     """
-    try:
-        response = openai.chat.completions.create(
-            model="gpt-4-turbo-preview",
-            messages=[
-                {"role": "system", "content": "You are a world-class economic analyst for the Nigerian government, specializing in inequality and fiscal policy."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=700
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Error generating AI analysis: {e}" 
-
-# --- Mesa Model Simulation ---
-def run_nigeria_simulation(household_welfare_support, key_sector_investment, target_sector_name, gdp_growth, inflation_rate, unemployment_rate, tax_rate, steps=50, **kwargs):
-    """
-    This function runs our Mesa-based Nigeria model and returns the key results, including time-series data.
-    """
-    st.info(f"Running simulation for {steps} steps with Household Support: {household_welfare_support*100:.0f}%, Sector Investment: {key_sector_investment*100:.0f}%...")
-    model = NigeriaModel(
-        household_welfare_support=household_welfare_support,
-        key_sector_investment=key_sector_investment,
-        gdp_growth=gdp_growth / 100.0,
-        inflation_rate=inflation_rate / 100.0,
-        unemployment_rate=unemployment_rate / 100.0,
-        tax_rate=tax_rate / 100.0, # Add tax rate
-        **kwargs # Pass all the advanced assumptions to the model
-    )
-
-    # Run the simulation for the specified number of steps.
-    for i in range(steps):
-        model.step()
-
-    # Get the complete data from the simulation.
-    model_data = model.datacollector.get_model_vars_dataframe()
-
-    # Calculate summary statistics.
-    initial_households = model_data.iloc[0]["Households"]
-    initial_business = model_data.iloc[0]["Businesses"]
-    final_households = model_data.iloc[-1]["Households"]
-    final_business = model_data.iloc[-1]["Businesses"]
     
-    pop_growth = ((final_households - initial_households) / initial_households) * 100 if initial_households > 0 else 0
-    target_sector_growth = ((final_business - initial_business) / initial_business) * 100 if initial_business > 0 else 0
+    try:
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-pro",
+            temperature=0.5,
+            google_api_key=api_key,
+            convert_system_message_to_human=True
+        )
+        formatted_prompt = prompt_template.format(
+            policy_text=policy_text, gdp_growth=gdp_growth, inflation_rate=inflation_rate,
+            initial_unemployment_rate=initial_unemployment_rate, tax_rate=tax_rate,
+            final_unemployment=final_unemployment, unemployment_change=unemployment_change,
+            sector_growth=sector_growth, gov_budget=gov_budget, low_income_change=low_income_change,
+            high_income_change=high_income_change, target_sector=target_sector
+        )
+        response = llm.invoke(formatted_prompt)
+        return response.content
+    except Exception as e:
+        st.error(f"AI Analysis Failed: {e}")
+        return "The AI analysis could not be completed due to an error."
 
-    # Generate the final land use map.
-    land_use_map = np.zeros((model.grid.width, model.grid.height))
-    for x in range(model.grid.width):
-        for y in range(model.grid.height):
-            content = model.grid.get_cell_list_contents([(x, y)])
-            if content:
-                if any(a.agent_type == "Business" for a in content):
-                    land_use_map[x, y] = 2
-                else:
-                    land_use_map[x, y] = 1
-            else:
-                land_use_map[x, y] = 3
-            
-    # Return all the results in a dictionary.
+def run_nigeria_simulation(steps=50):
+    """Runs the agent-based model simulation."""
+    
+    # --- Define Population Scale ---
+    # Each agent represents a larger group to model the ~200M population
+    TARGET_POPULATION = 200_000_000
+    POPULATION_SCALE = 10_000 # Each agent represents 10,000 people/entities
+
+    # Collect all necessary parameters from session state
+    sim_params = {
+        "target_population": TARGET_POPULATION,
+        "population_scale": POPULATION_SCALE,
+        "household_to_business_ratio": 5.0,
+        "household_welfare_support": st.session_state.ai_params['household_welfare_support'],
+        "key_sector_investment": st.session_state.ai_params['key_sector_investment'],
+        "gdp_growth": st.session_state.gdp_growth,
+        "inflation_rate": st.session_state.inflation_rate,
+        "unemployment_rate": st.session_state.unemployment_rate,
+        "tax_rate": st.session_state.tax_rate,
+    }
+    # Add advanced parameters
+    for key in [k for k in st.session_state.keys() if 'sensitivity' in k or 'propensity' in k or 'effectiveness' in k]:
+        sim_params[key] = st.session_state[key]
+
+    # The model now calculates its own grid size based on population
+    model = NigeriaModel(**sim_params)
+
+    # The model now calculates its own grid size based on population
+
+    
+    for _ in range(steps):
+        model.step()
+    
+    model_data = model.datacollector.get_model_vars_dataframe()
+    
+    # Calculate results
+    initial_households = model_data.iloc[0][['Low Income', 'Medium Income', 'High Income']].sum()
+    final_households = model_data.iloc[-1][['Low Income', 'Medium Income', 'High Income']].sum()
+    initial_businesses = model_data.iloc[0]['Businesses']
+    final_businesses = model_data.iloc[-1]['Businesses']
+    
     return {
-        "target_sector_growth_percent": round(target_sector_growth, 2),
-        "population_growth_percent": round(pop_growth, 2),
-        "land_use_map": land_use_map,
-        "household_welfare_support": household_welfare_support,
-        "key_sector_investment": key_sector_investment,
-        "target_sector_name": target_sector_name,
         "time_series_data": model_data,
-        "initial_low_income": model_data.iloc[0]["Low Income"],
-        "final_low_income": model_data.iloc[-1]["Low Income"],
-        "initial_medium_income": model_data.iloc[0]["Medium Income"],
-        "final_medium_income": model_data.iloc[-1]["Medium Income"],
-        "initial_high_income": model_data.iloc[0]["High Income"],
-        "final_high_income": model_data.iloc[-1]["High Income"],
+        "target_sector_growth_percent": ((final_businesses - initial_businesses) / initial_businesses) * 100 if initial_businesses > 0 else 0,
+        "population_growth_percent": ((final_households - initial_households) / initial_households) * 100 if initial_households > 0 else 0,
+        "initial_low_income": model_data.iloc[0]['Low Income'],
+        "final_low_income": model_data.iloc[-1]['Low Income'],
+        "initial_medium_income": model_data.iloc[0]['Medium Income'],
+        "final_medium_income": model_data.iloc[-1]['Medium Income'],
+        "initial_high_income": model_data.iloc[0]['High Income'],
+        "final_high_income": model_data.iloc[-1]['High Income'],
+        "target_sector_name": st.session_state.ai_params['target_sector_name']
     }
 
-# --- Streamlit User Interface ---
-st.title("🇳🇬 Nigerian Economic Policy Simulator")
-st.write("Describe a policy in your own words, and let our AI-powered model simulate its potential impact.")
+# --- UI Rendering Functions ---
 
-# We use session_state to store the extracted parameters across reruns
-if 'params' not in st.session_state:
-    st.session_state.params = None
-if 'policy_text' not in st.session_state:
-    st.session_state.policy_text = ""
+def render_sidebar():
+    """Renders the sidebar for user input, updating session_state directly."""
+    with st.sidebar:
+        
+        
+        # --- Step 1: Economic Scenario ---
+        st.markdown("#### Step 1: Configure Economic Scenario")
+        st.caption("Defaults have been set with current economic data. Only change if you wish to experiment with different scenarios.")
+        with st.expander("Adjust Parameters", expanded=False):
+            st.session_state.gdp_growth = st.slider("GDP Growth Rate (%)", -5.0, 10.0, st.session_state.gdp_growth, 0.1)
+            st.session_state.inflation_rate = st.slider("Inflation Rate (%)", 0.0, 50.0, st.session_state.inflation_rate, 0.01)
+            st.session_state.unemployment_rate = st.slider("Initial Unemployment Rate (%)", 0.0, 40.0, st.session_state.unemployment_rate, 0.1)
+            st.session_state.tax_rate = st.slider("Government Tax Rate (%)", 5.0, 50.0, st.session_state.tax_rate, 0.5)
 
-with st.sidebar:
-    st.header("1. Set Economic & Fiscal Scenario")
-    # Sliders for setting the economic conditions
-    gdp_growth = st.slider("GDP Growth Rate (%)", -5.0, 10.0, 3.0, 0.1)
-    inflation_rate = st.slider("Inflation Rate (%)", 0.0, 50.0, 26.5, 0.5)
-    unemployment_rate = st.slider("Initial Unemployment Rate (%)", 0.0, 25.0, 8.0, 0.1)
-    tax_rate = st.slider("Tax Rate on Economic Activity (%)", 0.0, 50.0, 10.0, 0.5)
+        
 
-    st.header("2. Describe Your Policy")
-    policy_description = st.text_area(
-        "Describe the economic policy you want to test:", 
-        height=150,
-        value="Implement a 30% subsidy for agriculture and remove the fuel subsidy entirely to boost food production."
-    )
+        # --- Step 2: Advanced Assumptions ---
+        st.markdown("#### Step 2: Advanced Assumptions")
+        st.caption("Adjust agent sensitivity and model behavior. :red[Warning: Do not touch unless you're an economist.]")
+        with st.expander("Adjust Parameters", expanded=False):
+            for key in [k for k in st.session_state.keys() if 'sensitivity' in k or 'propensity' in k or 'effectiveness' in k]:
+                st.session_state[key] = st.slider(
+                    key.replace('_', ' ').title(), 0.0, 1.0, st.session_state[key], 0.05
+                )
+        
+        
 
-    if st.button("Analyze Policy Intent"):
-        with st.spinner("🤖 AI is interpreting your policy..."):
-            st.session_state.params = get_ai_parameters(policy_description)
-            st.session_state.policy_text = policy_description # Save the policy text for later
+        # --- Step 3: Propose a Policy ---
+        st.markdown("#### Step 3: Propose a Policy")
+        example_policies = {
+            "Select an example...": "",
+            "Agricultural Tech Investment": "Invest heavily in agricultural technology and infrastructure to boost food production, reduce reliance on imports, and create jobs in rural areas.",
+            "Digital Skills Grant": "Launch a nationwide grant to fund digital skills training for young people, aiming to grow the tech sector and improve youth employment.",
+            "Small Business Tax Cut": "Implement a 10% tax cut for small and medium-sized enterprises (SMEs) to encourage entrepreneurship and stimulate local economies."
+        }
+        
+        def on_example_change():
+            st.session_state.policy_text = example_policies[st.session_state.example_policy]
 
-    if st.session_state.params:
-        st.header("2. Review Extracted Parameters")
-        st.write("The AI has interpreted your policy as follows:")
-        st.metric("Household Welfare Support", f"{st.session_state.params['household_welfare_support']*100:.0f}%")
-        st.metric("Key Sector Investment", f"{st.session_state.params['key_sector_investment']*100:.0f}%")
-        st.metric("Identified Target Sector", st.session_state.params.get('target_sector_name', 'General Business'))
-        st.info(f"**AI's Rationale:** {st.session_state.params['rationale']}")
-
-    # --- Advanced Settings --- 
-    with st.sidebar.expander("**Advanced Economic Assumptions**"):
-        st.write("Control the underlying agent behavior. Use for sensitivity analysis.")
-        low_income_inflation_sensitivity = st.slider("Low-Income Inflation Sensitivity", 0.0, 1.0, 0.7, 0.05)
-        medium_income_inflation_sensitivity = st.slider("Medium-Income Inflation Sensitivity", 0.0, 1.0, 0.4, 0.05)
-        high_income_inflation_sensitivity = st.slider("High-Income Inflation Sensitivity", 0.0, 1.0, 0.1, 0.05)
-        unemployment_sensitivity = st.slider("Unemployment Sensitivity", 0.0, 1.0, 0.5, 0.05)
-        welfare_support_effectiveness = st.slider("Welfare Support Effectiveness", 0.0, 1.0, 0.3, 0.05)
-        gdp_growth_effectiveness = st.slider("GDP Growth Effectiveness", 0.0, 1.0, 0.2, 0.05)
-        low_income_expansion_propensity = st.slider("Low-Income Expansion Propensity", 0.0, 0.5, 0.05, 0.01)
-        medium_income_expansion_propensity = st.slider("Medium-Income Expansion Propensity", 0.0, 0.5, 0.1, 0.01)
-        high_income_expansion_propensity = st.slider("High-Income Expansion Propensity", 0.0, 0.5, 0.15, 0.01)
-
-# Main content area
-if st.session_state.params:
-    st.header("3. Run Simulation & See Results")
-    if st.button("Run Simulation & Analyze", type="primary"):
-        # We need to filter out the 'rationale' before passing params to the simulation
-        sim_params = {k: v for k, v in st.session_state.params.items() if k != 'rationale'}
-        sim_results = run_nigeria_simulation(
-            **sim_params, 
-            gdp_growth=gdp_growth, 
-            inflation_rate=inflation_rate, 
-            unemployment_rate=unemployment_rate,
-            tax_rate=tax_rate, # Pass tax rate
-            # Pass advanced parameters
-            low_income_inflation_sensitivity=low_income_inflation_sensitivity,
-            medium_income_inflation_sensitivity=medium_income_inflation_sensitivity,
-            high_income_inflation_sensitivity=high_income_inflation_sensitivity,
-            unemployment_sensitivity=unemployment_sensitivity,
-            welfare_support_effectiveness=welfare_support_effectiveness,
-            gdp_growth_effectiveness=gdp_growth_effectiveness,
-            low_income_expansion_propensity=low_income_expansion_propensity,
-            medium_income_expansion_propensity=medium_income_expansion_propensity,
-            high_income_expansion_propensity=high_income_expansion_propensity
+        st.selectbox(
+            "Load an Example Policy (Optional)",
+            options=list(example_policies.keys()),
+            key='example_policy',
+            on_change=on_example_change
         )
         
-        st.header("Simulation Results")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Target Sector Growth", f"{sim_results['target_sector_growth_percent']}%")
-            st.metric("Household (Population) Growth", f"{sim_results['population_growth_percent']}%")
-            
-            st.write("**Final Land Use Map**")
-            fig, ax = plt.subplots()
-            cmap = plt.get_cmap('terrain', 3)
-            im = ax.imshow(sim_results['land_use_map'], cmap=cmap)
-            ax.set_xticks([])
-            ax.set_yticks([])
-            cbar = fig.colorbar(im, ticks=[1, 2, 3])
-            cbar.ax.set_yticklabels(['Household', sim_results.get('target_sector_name', 'Business'), 'Undeveloped'])
-            st.pyplot(fig)
+        st.session_state.policy_text = st.text_area(
+            "**Propose or Modify an Economic Policy**",
+            st.session_state.policy_text,
+            height=150,
+            placeholder="e.g., 'Invest in agricultural tech to boost food production and create jobs.'"
+        )
 
-        with col2:
-            st.write("**AI-Powered Policy Analysis**")
-            with st.spinner("🤖 Analyzing the policy's impact on the Nigerian economy..."):
-                analysis = get_ai_analysis(st.session_state.policy_text, sim_results, gdp_growth, inflation_rate, unemployment_rate, tax_rate)
-                st.markdown(analysis)
+        if st.button("Analyze Policy Intent"):
+            if st.session_state.policy_text:
+                with st.spinner("🤖 AI is interpreting your policy..."):
+                    st.session_state.ai_params = get_ai_parameters(st.session_state.policy_text, st.session_state.api_key)
+                    st.session_state.simulation_results = None # Reset results
+                    st.session_state.analysis_complete = False
+            else:
+                st.warning("Please describe a policy first.")
 
-        # --- Time Series Charts ---
-        st.header("Simulation Timeline")
-        st.write("These charts show the evolution of the simulation over 50 steps.")
+def render_main_content():
+    """Renders the main content area based on the app's state."""
+    st.title("🇳🇬 Nigerian Economic Policy Simulator")
+
+    if not st.session_state.ai_params:
+        st.info("👈 Set the economic scenario, adjust assumptions, and propose a policy in the sidebar to begin.")
+        with st.expander("Learn about the Model Methodology"):
+            st.markdown("""
+            ### Agent-Based Model (ABM)
+            The simulation is powered by an Agent-Based Model (ABM) that models two primary agent types: Households and Businesses. Their interactions and decisions, influenced by your policy and macroeconomic factors, produce the emergent outcomes you see.
+            ### AI Integration
+            We use Google's Gemini Pro to interpret your natural language policy proposals and to provide a qualitative analysis of the simulation's results.
+            """)
+        return
+
+    # Display AI-interpreted parameters
+    params = st.session_state.ai_params
+    st.subheader("AI-Interpreted Policy Parameters")
+    st.caption(f"**Rationale:** *{params['rationale']}*" )
+    
+    cols = st.columns(3)
+    cols[0].metric("Household Welfare Support", f"{params['household_welfare_support']:.0%}")
+    cols[1].metric("Key Sector Investment", f"{params['key_sector_investment']:.0%}")
+    cols[2].metric("Target Sector", params['target_sector_name'])
+
+    if st.button("Run Simulation & Generate Analysis", type="primary"):
+        with st.spinner("📈 Setting up country environment and running simulation..."):
+            st.session_state.simulation_results = run_nigeria_simulation()
+        with st.spinner("✍️ Gemini is drafting the policy briefing..."):
+            st.session_state.ai_analysis = get_ai_analysis(
+                st.session_state.policy_text, 
+                st.session_state.simulation_results,
+                st.session_state.api_key
+            )
+            st.session_state.analysis_complete = True
+
+    if st.session_state.analysis_complete:
         
-        st.subheader("Population Dynamics")
-        chart_data_pop = sim_results['time_series_data'][['Low Income', 'Medium Income', 'High Income', 'Businesses']]
-        st.line_chart(chart_data_pop)
+        st.subheader("Simulation Results & AI Briefing")
+        
+        sim_results = st.session_state.simulation_results
+        tab1, tab2, tab3 = st.tabs(["Briefing", "Population Charts", "Economic Charts"])
+        
+        with tab1:
+            st.markdown(st.session_state.ai_analysis, unsafe_allow_html=True)
+        with tab2:
+            st.subheader("Agent Population Over Time")
+            chart_data_pop = sim_results['time_series_data'][['Low Income', 'Medium Income', 'High Income', 'Businesses']]
+            st.line_chart(chart_data_pop)
+        with tab3:
+            st.subheader("Macroeconomic Indicators Over Time")
+            chart_data_gov = sim_results['time_series_data'][['Government Budget', 'Unemployment Rate']]
+            st.line_chart(chart_data_gov)
+            
+            st.subheader("Export Data")
+            csv_data = sim_results['time_series_data'].to_csv().encode('utf-8')
+            st.download_button(
+                label="Download Simulation Data (CSV)",
+                data=csv_data,
+                file_name='nigeria_simulation_results.csv',
+                mime='text/csv',
+            )
 
-        st.subheader("Government Fiscal Position")
-        chart_data_gov = sim_results['time_series_data'][['Government Budget']]
-        st.line_chart(chart_data_gov)
+# --- Main App Execution ---
+def main():
+    """Main function to run the Streamlit app."""
+    init_session_state()
+    
+    # Check for API key from Hugging Face Secrets
+    st.session_state.api_key = os.environ.get("GOOGLE_API_KEY")
+    
+    if not st.session_state.api_key:
+        st.error("🚨 I can't run without a Google AI API Key buddy!")
+        st.info("Please add your Google AI API Key as a secret in your Hugging Face or Deepnote Space. Which is where i assume you're running this.. Name the secret 'GOOGLE_API_KEY'.If you're running this on your local machine, run GOOGLE_API_KEY='Your-own-API-key-here' streamlit run app.py")
+        st.stop()
+    
+    render_sidebar()
+    render_main_content()
 
-        st.subheader("Macroeconomic Dynamics")
-        chart_data_macro = sim_results['time_series_data'][['Unemployment Rate']]
-        st.line_chart(chart_data_macro)
-else:
-    st.info("Describe a policy in the sidebar and click 'Analyze Policy Intent' to begin.")
+if __name__ == "__main__":
+    main()

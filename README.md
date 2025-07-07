@@ -1,42 +1,46 @@
 # Nigerian Economic Policy Simulator
 
-This project presents an interactive Nigerian Economic Policy Simulator. It combines a large-language-model (LLM) for natural language policy input, an agent-based computational economics (ACE) core for simulation, and real-time fiscal feedback loops. The goal is to provide a transparent, rapid-feedback tool for evaluating the complex, cross-sectoral impacts of fiscal and social policies in Nigeria.
+This project presents an interactive Nigerian Economic Policy Simulator. It combines a powerful large-language-model (LLM) for natural language policy input and an agent-based computational economics (ACE) core for simulation. The goal is to provide a transparent, rapid-feedback tool for evaluating the complex, cross-sectoral impacts of fiscal and social policies in Nigeria.
 
-The simulator allows users to enter plain-language policy proposals (e.g., "remove the fuel subsidy and re-invest 50% of the savings into agricultural support"). OpenAI's GPT-4 translates these proposals into quantitative model parameters. The core simulator, built with Mesa, models heterogeneous households (stratified by income) and businesses on a 2D grid. The model includes dynamic unemployment and government finance mechanisms, creating feedback where policy effects are constrained by a balanced budget approach.
+The simulator allows users to enter plain-language policy proposals (e.g., "remove the fuel subsidy and re-invest 50% of the savings into agricultural support"). **Google's Gemini 1.5 Pro** translates these proposals into quantitative model parameters. The core simulator, built with Mesa, models heterogeneous households (stratified by income) and businesses. The model includes dynamic unemployment and government finance mechanisms, creating feedback where policy effects are constrained by real-world economic data.
 
-The entire system is deployed as a Streamlit web application, enabling real-time, interactive policy experiments. Sensitivity sliders for core behavioral assumptions allow for robust exploration of model uncertainty.
+The entire system is deployed as a Streamlit web application, enabling real-time, interactive policy experiments.
+
+-------
+## App Showcase Description
+
+### Nigerian Economic Policy Simulator
+An advanced agent-based modeling tool that simulates how economic policies ripple through Nigeria's economy. Using autonomous agents representing households and businesses, it models complex economic interactions to predict policy impacts on employment, income distribution, and GDP growth. Input your policy in plain language, and the AI-powered simulator will generate detailed forecasts and risk analyses, providing valuable insights for evidence-based decision making.
 
 ## Features
 
-*   **Natural Language Policy Input:** Use plain English to define economic policies.
-*   **Agent-Based Modeling:** Simulates individual household and business behaviors.
-*   **Dynamic Economic Indicators:** Tracks GDP, unemployment, inflation, government budget, and population demographics.
-*   **Interactive Dashboard:** Visualizes simulation results in real-time using Streamlit.
-*   **Sensitivity Analysis:** Adjust model parameters to explore different scenarios.
+* **Natural Language Policy Input:** Use plain English to define economic policies, powered by Google Gemini.
+* **Agent-Based Modeling:** Simulates individual household and business behaviors based on real-world data.
+* **Dynamic Economic Indicators:** Tracks GDP, unemployment, inflation, government budget, and population demographics.
+* **Interactive Dashboard:** Visualizes simulation results in real-time using Streamlit.
+* **Sensitivity Analysis:** Adjust macroeconomic and agent-level parameters to explore different scenarios.
 
-## Scientific Paper and Live Demo
+## Data sources
+**Inflation** Central Bank Of Nigeria: https://www.cbn.gov.ng/rates/inflrates.html
+**GDP Growth Rate** World Bank: https://data.worldbank.org/indicator/NY.GDP.MKTP.KD.ZG?locations=NG
+**Unemployment** Nigerian Bureau of Statistics: https://www.nigerianstat.gov.ng/pdfuploads/NLFS_Q1_2024_Report.pdf
+**Tax Rate** https://tradingeconomics.com/nigeria/personal-income-tax-rate#:~:text=The%20Personal%20Income%20Tax%20Rate,of%2024.00%20percent%20in%202012.
 
-For a detailed explanation of the methodology, findings, and implications of this work, please refer to our scientific paper:
-*   **Paper:** (You can link to the `paper.pdf` in your repository if you commit it, or to an online version if you host it elsewhere.)
+## Running the Application
 
-Experience the simulator live:
-*   **Live Demo on Deepnote:** [https://deepnote.com/streamlit-apps/cc9b3ebf-0139-46f5-bdda-06a8160b7227](https://deepnote.com/streamlit-apps/cc9b3ebf-0139-46f5-bdda-06a8160b7227) (View in Firefox or Chrome)
-
-## Running the Application Locally
-
-To run the Nigerian Economic Policy Simulator on your local machine, follow these steps:
+To run the Nigerian Economic Policy Simulator on your machine, follow these steps:
 
 ### 1. Prerequisites
 
-*   Python 3.8 or higher
-*   `pip` (Python package installer)
-*   `git` (for cloning the repository)
+* Python 3.8 or higher
+* `pip` (Python package installer)
+* `git` (for cloning the repository)
 
 ### 2. Clone the Repository
 
 ```bash
 git clone <repository-url> # Replace <repository-url> with the actual URL of your Git repository
-cd policy_simulation_app # Or your repository's root directory name
+cd <repository-directory>
 ```
 
 ### 3. Create and Activate a Virtual Environment
@@ -61,38 +65,48 @@ Install the required Python packages using the `requirements.txt` file:
 pip install -r requirements.txt
 ```
 
-### 5. Set Up OpenAI API Key
+### 5. Configure Your Google AI API Key
 
-The application uses the OpenAI API to interpret natural language policy inputs. You need to provide your OpenAI API key.
+This project uses the Google AI API to interpret natural language policy descriptions. You will need to provide your own API key.
 
-1.  Create a directory named `.streamlit` in the root of the project directory if it doesn't already exist:
-    ```bash
-    mkdir .streamlit
-    ```
-2.  Inside the `.streamlit` directory, create a file named `secrets.toml`.
-3.  Add your OpenAI API key to `secrets.toml` in the following format:
-    ```toml
-    OPENAI_API_KEY = "your_openai_api_key_here"
-    ```
-    Replace `"your_openai_api_key_here"` with your actual OpenAI API key.
+The application expects the key to be available as an environment variable named `GOOGLE_API_KEY`.
+
+**On macOS/Linux:**
+
+```bash
+export GOOGLE_API_KEY='Your-own-API-key-here'
+```
+
+**On Windows (Command Prompt):**
+
+```bash
+set GOOGLE_API_KEY=Your-own-API-key-here
+```
 
 ### 6. Run the Streamlit Application
 
-Once the dependencies are installed and the API key is set up, you can run the Streamlit application:
+Once the dependencies are installed and the API key is set, you can run the Streamlit application:
 
 ```bash
 streamlit run app.py
 ```
 
-This will typically open the application in your default web browser. If not, the command will output a local URL (usually `http://localhost:8501`) that you can open manually.
+This will typically open the application in your default web browser at `http://localhost:8501`.
 
 ## Project Structure
 
-*   `app.py`: Main Streamlit application file.
-*   `model.py`: Contains the Mesa agent-based model logic (`NigerianAgent`, `NigeriaModel`).
-*   `requirements.txt`: Lists Python dependencies.
-*   `.streamlit/secrets.toml`: Stores the OpenAI API key (ensure this is in your `.gitignore` if the repository is public and contains a real key).
-*   `README.md`: This file.
+* `app.py`: Main Streamlit application file containing the UI logic.
+* `model.py`: Contains the Mesa agent-based model logic (`NigerianAgent`, `NigeriaModel`).
+* `requirements.txt`: Lists Python dependencies for the project.
+* `README.md`: This file.
+
+## Future Work
+
+* **Regional Granularity:** Introduce state or geopolitical zone-level analysis for more localized policy insights.
+* **External Shock Modeling:** Add a module to test policy resilience against external shocks like oil price crashes or droughts.
+* **Comparative Policy Analysis:** Implement a side-by-side comparison feature to evaluate multiple policy scenarios simultaneously.
+* **Expanded Sector Detail:** Break down the business sector into more specific industries (e.g., Agriculture, Tech, Manufacturing) for more targeted simulations.
+
 
 ## License
 

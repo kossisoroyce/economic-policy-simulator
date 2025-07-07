@@ -2,4 +2,7 @@ streamlit
 pandas
 mesa
 matplotlib
-openai
+langchain==0.2.1
+langchain-google-genai==1.0.4
+pydantic
+nest_asyncio
