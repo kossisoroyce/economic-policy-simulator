@@ -1,9 +1,0 @@
-Ever wanted to tinker with Nigeria’s economy like it’s a city-builder game? 🕹️🇳🇬  
-Meet a new Policy Simulator: drag a welfare slider, nudge taxes, splash cash on a sector—and watch thousands of households 🏠 and businesses 🏢 react in real time.  
-
-It’s fun, fast, and shows the hidden ripple-effects on jobs, prices & the national budget—no PhD required.  
-
-Give it a spin and see what policies you’d try. https://huggingface.co/spaces/electricsheepafrica/Nigerian-Economic-Policy-Simulator
-#EconTwitter #Nigeria #ABM
-
-Github: 
