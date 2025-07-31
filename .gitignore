@@ -9,9 +9,8 @@ __pycache__/
 .streamlit/secrets.toml
 
 # Ignore paper-related generated files
-paper.md
-*.svg
-*.png
+
+
 *.pdf
 
 # Ignore OS-specific files (optional but good practice)
